@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -26,7 +27,7 @@ jobs:
         run: |
           set -e
 
-          echo "Searching for ZIP file..."
+          echo "Searching for ZIP..."
 
           ZIP_FILE=$(find . -type f -name "*.zip" -print -quit)
 
@@ -35,7 +36,7 @@ jobs:
             exit 1
           fi
 
-          echo "ZIP: $ZIP_FILE"
+          echo "ZIP found: $ZIP_FILE"
 
           rm -rf extracted
           mkdir -p extracted
@@ -48,8 +49,6 @@ jobs:
         shell: bash
         run: |
           set -e
-
-          echo "Searching for Android project..."
 
           PROJECT_DIR=""
 
@@ -79,7 +78,7 @@ jobs:
 
           PROJECT_DIR=$(cd "$PROJECT_DIR" && pwd)
 
-          echo "Android project found:"
+          echo "Android project:"
           echo "$PROJECT_DIR"
 
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
@@ -103,7 +102,7 @@ jobs:
           zipStorePath=wrapper/dists
           EOF
 
-          echo "Gradle wrapper configured for Gradle 9.3.1."
+          echo "Gradle 9.3.1 configured."
 
       - name: Prepare Gradle
         shell: bash
@@ -113,13 +112,42 @@ jobs:
           cd "$PROJECT_DIR"
 
           if [ ! -f "./gradlew" ]; then
-            echo "gradlew not found. Creating Gradle wrapper..."
+            echo "gradlew not found."
+            echo "Creating Gradle wrapper..."
 
             gradle wrapper --gradle-version 9.3.1
-
           fi
 
           chmod +x ./gradlew
+
+      - name: Create required debug keystore
+        shell: bash
+        run: |
+          set -e
+
+          echo "Checking debug keystore..."
+
+          KEYSTORE="$PROJECT_DIR/debug.keystore"
+
+          if [ ! -f "$KEYSTORE" ]; then
+            echo "debug.keystore not found."
+            echo "Creating debug keystore..."
+
+            keytool -genkeypair \
+              -v \
+              -keystore "$KEYSTORE" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          else
+            echo "debug.keystore already exists."
+          fi
+
+          echo "Debug keystore created successfully."
 
       - name: Verify project
         shell: bash
@@ -128,16 +156,16 @@ jobs:
 
           cd "$PROJECT_DIR"
 
-          echo "Java:"
+          echo "Java version:"
           java -version
 
           echo ""
-          echo "Gradle:"
+          echo "Gradle version:"
           ./gradlew --version
 
           echo ""
-          echo "Project files:"
-          ls -la
+          echo "Debug keystore:"
+          ls -lh debug.keystore
 
       - name: Clean build
         shell: bash
@@ -178,7 +206,12 @@ jobs:
 
           if [ -z "$APK_FILE" ]; then
             echo "ERROR: APK was not generated."
-            find "$PROJECT_DIR" -type f -name "*.apk"
+
+            find "$PROJECT_DIR" \
+              -type f \
+              -name "*.apk" \
+              -print
+
             exit 1
           fi
 
@@ -187,7 +220,8 @@ jobs:
 
           mkdir -p apk-output
 
-          cp "$APK_FILE" apk-output/TEST-MITRA-debug.apk
+          cp "$APK_FILE" \
+            apk-output/TEST-MITRA-debug.apk
 
       - name: Upload TEST MITRA APK
         uses: actions/upload-artifact@v4
