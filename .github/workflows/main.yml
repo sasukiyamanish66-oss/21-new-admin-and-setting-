@@ -1,386 +1,178 @@
-name: 🚀 TEST MITRA - Extract, Fix & Build APK
+name: TEST MITRA APK Build
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
-      - master
-
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build-apk:
-    name: 📦 TEST MITRA APK Build
+  build:
+    name: Build TEST MITRA Debug APK
     runs-on: ubuntu-latest
 
     steps:
 
-      # =========================================================
-      # 1. CHECKOUT
-      # =========================================================
-      - name: 📥 Checkout Repository
+      # ---------------------------------------------------------
+      # 1. Checkout project
+      # ---------------------------------------------------------
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-
-      # =========================================================
-      # 2. FIND AND EXTRACT ZIP
-      # =========================================================
-      - name: 📂 Detect and Extract ZIP
+      # ---------------------------------------------------------
+      # 2. Find Android project
+      # ---------------------------------------------------------
+      - name: Find Android project
         shell: bash
         run: |
           set -e
 
-          echo "========================================"
-          echo "🔍 SEARCHING FOR ZIP FILE"
-          echo "========================================"
-
-          ZIP_FILE=$(find . \
-            -maxdepth 2 \
-            -type f \
-            -iname "*.zip" \
-            -not -path "./.git/*" \
-            | head -n 1 || true)
-
-          if [ -n "$ZIP_FILE" ]; then
-
-            echo "📦 ZIP FOUND:"
-            echo "$ZIP_FILE"
-
-            rm -rf extracted_temp
-            mkdir -p extracted_temp
-
-            echo "⚡ Extracting..."
-
-            unzip -o -q "$ZIP_FILE" -d extracted_temp
-
-            echo "🔎 Detecting Android project..."
-
-            if [ -f "extracted_temp/settings.gradle.kts" ] && \
-               [ -d "extracted_temp/app" ]; then
-
-              PROJECT_ROOT="extracted_temp"
-
-            else
-
-              PROJECT_ROOT=$(find extracted_temp \
-                -type f \
-                \( -name "settings.gradle.kts" -o -name "settings.gradle" \) \
-                -print -quit \
-                | xargs -r dirname)
-
-            fi
-
-            if [ -z "$PROJECT_ROOT" ]; then
-              echo "❌ Android Gradle project not found."
-              find extracted_temp -maxdepth 5 -type f | head -150
-              exit 1
-            fi
-
-            if [ ! -d "$PROJECT_ROOT/app" ]; then
-              echo "❌ app directory not found."
-              exit 1
-            fi
-
-            echo "✅ PROJECT ROOT:"
-            echo "$PROJECT_ROOT"
-
-            cp -a "$PROJECT_ROOT"/. .
-
-            rm -rf extracted_temp
-
-            echo "✅ ZIP extraction completed."
-
+          if [ -f "settings.gradle.kts" ]; then
+            PROJECT_DIR="."
           else
+            PROJECT_DIR=$(find . -name "settings.gradle.kts" -not -path "*/build/*" | head -n 1 | xargs dirname)
 
-            echo "ℹ️ No ZIP found."
-            echo "Using repository files."
-
+            if [ -z "$PROJECT_DIR" ]; then
+              echo "ERROR: settings.gradle.kts not found."
+              exit 1
+            fi
           fi
 
+          PROJECT_DIR=$(cd "$PROJECT_DIR" && pwd)
 
-      # =========================================================
-      # 3. VERIFY PROJECT
-      # =========================================================
-      - name: 🔎 Verify Android Project
-        shell: bash
-        run: |
-          set -e
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-          echo "========================================"
-          echo "🔎 VERIFYING PROJECT"
-          echo "========================================"
+          echo "======================================"
+          echo "TEST MITRA"
+          echo "Android project:"
+          echo "$PROJECT_DIR"
+          echo "======================================"
 
-          test -f settings.gradle.kts
-          test -f build.gradle.kts
-          test -f app/build.gradle.kts
-          test -d app/src/main
-
-          echo "✅ settings.gradle.kts"
-          echo "✅ build.gradle.kts"
-          echo "✅ app/build.gradle.kts"
-          echo "✅ app/src/main"
-
-          echo "✅ Project verified."
-
-
-      # =========================================================
-      # 4. JAVA 17
-      # =========================================================
-      - name: ☕ Setup Java JDK 17
+      # ---------------------------------------------------------
+      # 3. Setup JDK 17
+      # ---------------------------------------------------------
+      - name: Setup JDK 17
         uses: actions/setup-java@v4
         with:
+          distribution: temurin
           java-version: "17"
-          distribution: "temurin"
-          cache: gradle
 
-
-      # =========================================================
-      # 5. ANDROID SDK
-      # =========================================================
-      - name: 🤖 Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-
-      # =========================================================
-      # 6. INSTALL ANDROID SDK 36
-      # =========================================================
-      - name: 📱 Install Android SDK
+      # ---------------------------------------------------------
+      # 4. Fix build configuration only
+      # ---------------------------------------------------------
+      - name: Fix Android build configuration
         shell: bash
         run: |
           set -e
 
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          P="$PROJECT_DIR"
 
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0"
+          echo "Fixing Android build configuration..."
 
-          echo "✅ Android SDK ready."
-
-
-      # =========================================================
-      # 7. SETUP GRADLE 9.3.1
-      # =========================================================
-      - name: ⚙️ Setup Gradle 9.3.1
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "9.3.1"
-
-
-      # =========================================================
-      # 8. PREPARE ENVIRONMENT
-      # =========================================================
-      - name: 🔐 Prepare Environment Files
-        shell: bash
-        run: |
-          set -e
-
-          if [ ! -f ".env" ]; then
-            touch ".env"
+          # -----------------------------------------------------
+          # AGP
+          # -----------------------------------------------------
+          if [ -f "$P/gradle/libs.versions.toml" ]; then
+            sed -i 's/agp = "9\.1\.1"/agp = "8.9.2"/g' \
+              "$P/gradle/libs.versions.toml"
           fi
 
-          if [ ! -f ".env.example" ]; then
-            touch ".env.example"
-          fi
+          # -----------------------------------------------------
+          # compileSdk / targetSdk
+          # -----------------------------------------------------
+          if [ -f "$P/app/build.gradle.kts" ]; then
 
-          echo "✅ Environment files ready."
+            sed -i \
+              's/compileSdk { version = release(36) { minorApiLevel = 1 } }/compileSdk = 35/g' \
+              "$P/app/build.gradle.kts"
 
-
-      # =========================================================
-      # 9. FIX ONLY TEST_NAME NULL PARSING
-      # =========================================================
-      - name: 🛠️ Fix test_name Null Handling
-        shell: bash
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "🛠️ FIXING test_name PARSING"
-          echo "========================================"
-
-          python3 <<'PY'
-          from pathlib import Path
-
-          path = Path(
-              "app/src/main/java/com/example/data/model/Models.kt"
-          )
-
-          text = path.read_text()
-
-          old = '@Json(name = "test_name") val testName: String = ""'
-
-          new = '@Json(name = "test_name") val testName: String? = ""'
-
-          if old in text:
-              text = text.replace(old, new, 1)
-              path.write_text(text)
-              print("✅ TestItem.testName made nullable.")
-          else:
-              print("ℹ️ Expected TestItem declaration not found; leaving file unchanged.")
-          PY
-
-
-      # =========================================================
-      # 10. FIX TEST NAME USAGE SAFELY
-      # =========================================================
-      - name: 🛠️ Make Existing Test Name Usage Safe
-        shell: bash
-        run: |
-          set -e
-
-          python3 <<'PY'
-          from pathlib import Path
-
-          files = [
-              Path("app/src/main/java/com/example/ui/screens/student/StudentHomeScreen.kt"),
-              Path("app/src/main/java/com/example/ui/screens/admin/AdminHomeScreen.kt"),
-          ]
-
-          replacements = {
-              "onStartTest(test.id ?: 0L, test.testName, test.duration)":
-              "onStartTest(test.id ?: 0L, test.testName ?: \"Test #${test.id ?: 0L}\", test.duration)",
-
-              "text = test.testName,":
-              "text = test.testName ?: \"Test #${test.id ?: 0L}\",",
-
-              "text = test.testName,":
-              "text = test.testName ?: \"Test #${test.id ?: 0L}\",",
-
-              "\"Are you sure you want to delete '${test.testName}'? All associated questions will also be removed.\"":
-              "\"Are you sure you want to delete '${test.testName ?: \"Test #${test.id ?: 0L}\"}'? All associated questions will also be removed.\"",
-          }
-
-          for path in files:
-              if not path.exists():
-                  continue
-
-              text = path.read_text()
-
-              original = text
-
-              text = text.replace(
-                  "onStartTest(test.id ?: 0L, test.testName, test.duration)",
-                  "onStartTest(test.id ?: 0L, test.testName ?: \"Test #${test.id ?: 0L}\", test.duration)"
-              )
-
-              text = text.replace(
-                  "text = test.testName,",
-                  "text = test.testName ?: \"Test #${test.id ?: 0L}\","
-              )
-
-              text = text.replace(
-                  "\"Are you sure you want to delete '${test.testName}'? All associated questions will also be removed.\"",
-                  "\"Are you sure you want to delete '${test.testName ?: \"Test #${test.id ?: 0L}\"}'? All associated questions will also be removed.\""
-              )
-
-              if text != original:
-                  path.write_text(text)
-                  print(f"✅ Updated: {path}")
-              else:
-                  print(f"ℹ️ No matching usage found: {path}")
-          PY
-
-
-      # =========================================================
-      # 11. REMOVE KSP BUILD DEPENDENCIES ONLY
-      # =========================================================
-      - name: 🛠️ Fix KSP Build Configuration
-        shell: bash
-        run: |
-          set -e
-
-          python3 <<'PY'
-          from pathlib import Path
-
-          # Root build.gradle.kts
-          root = Path("build.gradle.kts")
-
-          if root.exists():
-              text = root.read_text()
-
-              text = text.replace(
-                  'alias(libs.plugins.google.devtools.ksp) apply false',
-                  ''
-              )
-
-              root.write_text(text)
-
-          # app/build.gradle.kts
-          app = Path("app/build.gradle.kts")
-
-          text = app.read_text()
-
-          text = text.replace(
-              'alias(libs.plugins.google.devtools.ksp)',
-              ''
-          )
-
-          text = text.replace(
-              '  "ksp"(libs.androidx.room.compiler)\n',
-              ''
-          )
-
-          text = text.replace(
-              '  "ksp"(libs.moshi.kotlin.codegen)\n',
-              ''
-          )
-
-          app.write_text(text)
-
-          print("✅ KSP build dependencies removed.")
-          PY
-
-
-      # =========================================================
-      # 12. VERIFY KSP REMOVED
-      # =========================================================
-      - name: 🔍 Verify KSP Configuration
-        shell: bash
-        run: |
-          set -e
-
-          if grep -Rni "google.devtools.ksp" \
-            build.gradle.kts \
-            app/build.gradle.kts; then
-
-            echo "❌ KSP plugin still present."
-            exit 1
+            sed -i \
+              's/targetSdk = 36/targetSdk = 35/g' \
+              "$P/app/build.gradle.kts"
 
           fi
 
-          if grep -n '"ksp"' app/build.gradle.kts; then
+          # -----------------------------------------------------
+          # AndroidX
+          # -----------------------------------------------------
+          touch "$P/gradle.properties"
 
-            echo "❌ KSP dependencies still present."
-            exit 1
+          grep -q '^android.useAndroidX=' "$P/gradle.properties" \
+            || echo 'android.useAndroidX=true' >> "$P/gradle.properties"
 
+          grep -q '^android.enableJetifier=' "$P/gradle.properties" \
+            || echo 'android.enableJetifier=true' >> "$P/gradle.properties"
+
+          # -----------------------------------------------------
+          # Disable configuration cache
+          # -----------------------------------------------------
+          sed -i \
+            's/^org.gradle.configuration-cache=true$/org.gradle.configuration-cache=false/' \
+            "$P/gradle.properties"
+
+          if ! grep -q '^org.gradle.configuration-cache=' "$P/gradle.properties"; then
+            echo 'org.gradle.configuration-cache=false' >> "$P/gradle.properties"
           fi
 
-          echo "✅ KSP configuration verified."
+          echo "Build configuration fixed."
 
-
-      # =========================================================
-      # 13. CREATE DEBUG KEYSTORE
-      # =========================================================
-      - name: 🔑 Create Debug Keystore
+      # ---------------------------------------------------------
+      # 5. Fix nullable testName compile issue
+      #    Only changes nullable String declaration to String.
+      #    No other application logic is changed.
+      # ---------------------------------------------------------
+      - name: Fix testName Kotlin type
         shell: bash
         run: |
           set -e
 
-          KEYSTORE="$GITHUB_WORKSPACE/debug.keystore"
+          P="$PROJECT_DIR"
 
-          echo "🔐 Checking debug.keystore..."
+          MODEL="$P/app/src/main/java/com/example/data/model/Models.kt"
 
-          if [ ! -f "$KEYSTORE" ]; then
+          if [ -f "$MODEL" ]; then
 
-            echo "⚡ Creating debug.keystore..."
+            # If generated/project version has nullable testName,
+            # make it non-null with an empty default.
+            sed -i \
+              's/val testName: String? = null/val testName: String = ""/g' \
+              "$MODEL"
 
-            keytool -genkeypair \
+            sed -i \
+              's/val testName: String?)/val testName: String)/g' \
+              "$MODEL"
+
+            sed -i \
+              's/val testName: String?,/val testName: String,/g' \
+              "$MODEL"
+
+            echo "testName type check completed."
+
+          else
+            echo "Models.kt not found. Skipping testName fix."
+          fi
+
+      # ---------------------------------------------------------
+      # 6. Make debug signing reliable
+      # ---------------------------------------------------------
+      - name: Create debug keystore if missing
+        shell: bash
+        run: |
+          set -e
+
+          P="$PROJECT_DIR"
+
+          if [ ! -f "$P/debug.keystore" ]; then
+
+            echo "Creating debug.keystore..."
+
+            keytool \
+              -genkeypair \
               -v \
-              -keystore "$KEYSTORE" \
+              -keystore "$P/debug.keystore" \
               -storepass android \
               -alias androiddebugkey \
               -keypass android \
@@ -389,139 +181,157 @@ jobs:
               -validity 10000 \
               -dname "CN=Android Debug,O=Android,C=US"
 
-            echo "✅ debug.keystore created."
+          else
+            echo "debug.keystore already exists."
+          fi
+
+      # ---------------------------------------------------------
+      # 7. Configure Supabase
+      # ---------------------------------------------------------
+      - name: Configure Supabase
+        shell: bash
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          set -e
+
+          P="$PROJECT_DIR"
+
+          if [ -n "$SUPABASE_URL" ] && [ -n "$SUPABASE_ANON_KEY" ]; then
+
+            printf 'SUPABASE_URL=%s\nSUPABASE_ANON_KEY=%s\n' \
+              "$SUPABASE_URL" \
+              "$SUPABASE_ANON_KEY" \
+              > "$P/.env"
+
+            echo "Supabase secrets configured."
+
+          elif [ -f "$P/.env.example" ]; then
+
+            cp "$P/.env.example" "$P/.env"
+
+            echo "Supabase secrets not supplied."
+            echo "Using .env.example."
 
           else
 
-            echo "✅ debug.keystore already exists."
+            touch "$P/.env"
+
+            echo "No .env.example found."
 
           fi
 
-          ls -lh "$KEYSTORE"
+      # ---------------------------------------------------------
+      # 8. Setup Gradle
+      # ---------------------------------------------------------
+      - name: Setup Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
 
-
-      # =========================================================
-      # 14. ENSURE GRADLE WRAPPER
-      # =========================================================
-      - name: 🛠️ Ensure Gradle Wrapper
+      # ---------------------------------------------------------
+      # 9. Verify project
+      # ---------------------------------------------------------
+      - name: Verify Android project
         shell: bash
         run: |
           set -e
 
-          if [ ! -f "./gradlew" ]; then
+          cd "$PROJECT_DIR"
 
-            echo "⚡ Gradle wrapper not found."
-            echo "➡️ Generating Gradle 9.3.1 wrapper..."
+          echo "======================================"
+          echo "Project verification"
+          echo "======================================"
 
-            gradle wrapper \
-              --gradle-version 9.3.1
+          test -f settings.gradle.kts
+          test -f app/build.gradle.kts
 
-            echo "✅ Gradle wrapper generated."
+          echo "settings.gradle.kts: OK"
+          echo "app/build.gradle.kts: OK"
 
-          else
-
-            echo "✅ Gradle wrapper already exists."
-
-          fi
-
-          chmod +x ./gradlew
-
-          ./gradlew --version
-
-
-      # =========================================================
-      # 15. CLEAN
-      # =========================================================
-      - name: 🧹 Clean Project
+      # ---------------------------------------------------------
+      # 10. Clean generated build folders
+      # ---------------------------------------------------------
+      - name: Clean build outputs
         shell: bash
         run: |
           set -e
 
-          ./gradlew clean \
+          cd "$PROJECT_DIR"
+
+          rm -rf .gradle
+          rm -rf build
+          rm -rf app/build
+
+          echo "Build outputs cleaned."
+
+      # ---------------------------------------------------------
+      # 11. Build Debug APK
+      # ---------------------------------------------------------
+      - name: Build TEST MITRA Debug APK
+        shell: bash
+        run: |
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          gradle \
             --no-daemon \
-            --stacktrace
-
-
-      # =========================================================
-      # 16. BUILD APK
-      # =========================================================
-      - name: 🔨 Build TEST MITRA Debug APK
-        shell: bash
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "🚀 BUILDING TEST MITRA APK"
-          echo "========================================"
-
-          ./gradlew :app:assembleDebug \
-            --no-daemon \
+            --no-configuration-cache \
             --stacktrace \
-            --warning-mode all \
-            -Dorg.gradle.jvmargs="-Xmx4096m -XX:+UseParallelGC -Dfile.encoding=UTF-8"
+            clean \
+            assembleDebug
 
-          echo "========================================"
-          echo "✅ APK BUILD SUCCESSFUL"
-          echo "========================================"
-
-
-      # =========================================================
-      # 17. VERIFY APK
-      # =========================================================
-      - name: 🔍 Verify APK
+      # ---------------------------------------------------------
+      # 12. Find APK
+      # ---------------------------------------------------------
+      - name: Find APK
         shell: bash
         run: |
           set -e
 
-          echo "========================================"
-          echo "📦 GENERATED APK"
-          echo "========================================"
-
-          find app/build/outputs/apk \
+          APK=$(find \
+            "$PROJECT_DIR/app/build/outputs/apk/debug" \
             -type f \
             -name "*.apk" \
-            -print
+            -print \
+            -quit)
 
-          APK_COUNT=$(find app/build/outputs/apk \
-            -type f \
-            -name "*.apk" \
-            | wc -l)
-
-          if [ "$APK_COUNT" -eq 0 ]; then
-            echo "❌ APK was not generated."
+          if [ -z "$APK" ]; then
+            echo "ERROR: APK was not generated."
             exit 1
           fi
 
-          echo "✅ APK COUNT: $APK_COUNT"
+          echo "APK found:"
+          echo "$APK"
 
+          mkdir -p "$GITHUB_WORKSPACE/apk-output"
 
-      # =========================================================
-      # 18. UPLOAD APK
-      # =========================================================
-      - name: 📤 Upload TEST MITRA APK
+          cp "$APK" \
+            "$GITHUB_WORKSPACE/apk-output/TEST-MITRA-debug.apk"
+
+      # ---------------------------------------------------------
+      # 13. Upload APK
+      # ---------------------------------------------------------
+      - name: Upload TEST MITRA APK
         uses: actions/upload-artifact@v4
         with:
           name: TEST-MITRA-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: apk-output/TEST-MITRA-debug.apk
           if-no-files-found: error
-          retention-days: 30
 
-
-      # =========================================================
-      # 19. FINAL SUMMARY
-      # =========================================================
-      - name: 🎉 Build Summary
+      # ---------------------------------------------------------
+      # 14. Build success
+      # ---------------------------------------------------------
+      - name: Build completed
         shell: bash
         run: |
-          echo "========================================"
-          echo "🎉 TEST MITRA BUILD COMPLETED"
-          echo "========================================"
-          echo
-          echo "Artifact: TEST-MITRA-APK"
-          echo
-          find app/build/outputs/apk/debug \
-            -type f \
-            -name "*.apk" \
-            -print
-          echo
-          echo "========================================"
+          echo ""
+          echo "======================================"
+          echo " TEST MITRA APK BUILD SUCCESSFUL"
+          echo "======================================"
+          echo ""
+          echo "APK artifact:"
+          echo "TEST-MITRA-APK"
+          echo ""
